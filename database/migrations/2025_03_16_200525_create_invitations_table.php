@@ -11,10 +11,13 @@ return new class extends Migration
         Schema::create('invitations', function (Blueprint $table) {
             $table->id();
             $table->foreignId('inviter_id')->constrained('users')->onDelete('cascade');
+            $table->foreignId('organization_id')->constrained()->onDelete('cascade');
             $table->string('email')->nullable();
             $table->string('token');
+            $table->string('role')->default('member');
             $table->boolean('is_link')->default(false);
             $table->timestamp('accepted_at')->nullable();
+            $table->timestamp('expires_at')->nullable();
             $table->timestamps();
         });
     }
