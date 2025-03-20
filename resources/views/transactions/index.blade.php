@@ -5,6 +5,18 @@
                 {{ __('Transactions') }}
             </h2>
             <div class="flex space-x-4">
+                <form action="{{ route('transactions.import') }}" method="POST" enctype="multipart/form-data" class="inline">
+                    @csrf
+                    <div class="flex items-center space-x-2">
+                        <input type="file" name="transactions_file" accept=".csv,.json" class="text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100">
+                        <button type="submit" class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded">
+                            Import
+                        </button>
+                    </div>
+                </form>
+                <a href="{{ route('transactions.export-all') }}" class="bg-green-500 hover:bg-green-700 text-white font-bold py-2 px-4 rounded">
+                    Export All Data
+                </a>
                 <a href="{{ route('transactions.create') }}" class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded">
                     Upload Statement
                 </a>
@@ -26,10 +38,20 @@
                 </div>
             @endif
 
-            @if($errors->any())
+            @if($errors->isNotEmpty())
                 <div class="mb-4 p-4 bg-red-100 text-red-700 rounded-md">
                     <ul class="list-disc list-inside">
                         @foreach($errors->all() as $error)
+                            <li>{{ $error }}</li>
+                        @endforeach
+                    </ul>
+                </div>
+            @endif
+
+            @if(session('errors') && collect(session('errors'))->isNotEmpty())
+                <div class="mb-4 p-4 bg-red-100 text-red-700 rounded-md">
+                    <ul class="list-disc list-inside">
+                        @foreach(session('errors') as $error)
                             <li>{{ $error }}</li>
                         @endforeach
                     </ul>
@@ -224,14 +246,6 @@
                     return;
                 }
 
-                // Remove unused fields
-                if (actionSelect.value !== 'category') {
-                    categorySelect.disabled = true;
-                }
-                if (actionSelect.value !== 'card') {
-                    cardSelect.disabled = true;
-                }
-
                 // Log form details before submission
                 console.log('Form action:', this.action);
                 console.log('Form method:', this.method);
@@ -240,13 +254,8 @@
                 console.log('Category:', categorySelect.value);
                 console.log('Card:', cardSelect.value);
 
-                // Ensure we're using POST method
-                this.method = 'POST';
+                // Submit the form
                 this.submit();
-
-                // Re-enable fields after submission
-                categorySelect.disabled = false;
-                cardSelect.disabled = false;
             });
 
             // Handle action select change

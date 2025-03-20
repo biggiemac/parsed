@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\Invitation;
+use App\Models\Organization;
 use App\Mail\InvitationEmail;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Mail;
@@ -13,25 +14,42 @@ class InvitationController extends Controller
 {
     public function index()
     {
-        $invitations = Invitation::where('inviter_id', auth()->id())
+        $organization = auth()->user()->currentOrganization;
+        if (!$organization) {
+            return redirect()->route('organizations.select')
+                ->with('error', 'Please select an organization first.');
+        }
+
+        $invitations = Invitation::where('organization_id', $organization->id)
             ->orderBy('created_at', 'desc')
             ->get();
 
-        return view('invitations.index', compact('invitations'));
+        return view('invitations.index', compact('invitations', 'organization'));
     }
 
     public function store(Request $request)
     {
+        $organization = auth()->user()->currentOrganization;
+        if (!$organization) {
+            return redirect()->route('organizations.select')
+                ->with('error', 'Please select an organization first.');
+        }
+
+        if (!$organization->isAdmin(auth()->user()) && !$organization->isOwner(auth()->user())) {
+            abort(403, 'You do not have permission to invite members to this organization.');
+        }
+
         $request->validate([
-            'email' => 'required|email'
+            'email' => 'required|email',
+            'role' => 'required|in:member,admin'
         ]);
 
-        $invitation = Invitation::create([
-            'email' => $request->email,
-            'token' => Str::random(32),
-            'inviter_id' => auth()->id(),
-            'expires_at' => now()->addDays(7)
-        ]);
+        $invitation = Invitation::createInvitation(
+            $organization,
+            auth()->user(),
+            $request->email,
+            $request->role
+        );
 
         Mail::to($request->email)->send(new InvitationEmail($invitation));
 
@@ -42,14 +60,26 @@ class InvitationController extends Controller
     /**
      * Generate a shareable invitation link
      */
-    public function generateLink()
+    public function generateLink(Request $request)
     {
-        $invitation = Invitation::create([
-            'token' => Str::random(32),
-            'inviter_id' => auth()->id(),
-            'expires_at' => now()->addDays(7),
-            'is_link' => true
+        $organization = auth()->user()->currentOrganization;
+        if (!$organization) {
+            return response()->json(['error' => 'Please select an organization first.'], 400);
+        }
+
+        if (!$organization->isAdmin(auth()->user()) && !$organization->isOwner(auth()->user())) {
+            return response()->json(['error' => 'You do not have permission to generate invitation links.'], 403);
+        }
+
+        $request->validate([
+            'role' => 'required|in:member,admin'
         ]);
+
+        $invitation = Invitation::createLinkInvitation(
+            $organization,
+            auth()->user(),
+            $request->role
+        );
 
         return response()->json([
             'link' => route('invitations.join', $invitation->token)
@@ -68,8 +98,15 @@ class InvitationController extends Controller
             ->firstOrFail();
 
         if (auth()->check()) {
-            return redirect()->route('dashboard')
-                ->with('error', 'You are already logged in.');
+            // If user is logged in, add them to the organization
+            try {
+                $invitation->accept(auth()->user());
+                return redirect()->route('dashboard')
+                    ->with('success', 'You have been added to the organization.');
+            } catch (\Exception $e) {
+                return redirect()->route('dashboard')
+                    ->with('error', $e->getMessage());
+            }
         }
 
         return view('auth.register', [
@@ -84,6 +121,18 @@ class InvitationController extends Controller
             ->whereNull('accepted_at')
             ->firstOrFail();
 
+        if (auth()->check()) {
+            // If user is logged in, add them to the organization
+            try {
+                $invitation->accept(auth()->user());
+                return redirect()->route('dashboard')
+                    ->with('success', 'You have been added to the organization.');
+            } catch (\Exception $e) {
+                return redirect()->route('dashboard')
+                    ->with('error', $e->getMessage());
+            }
+        }
+
         // Create new user account
         $user = \App\Models\User::create([
             'name' => explode('@', $invitation->email)[0],
@@ -91,8 +140,13 @@ class InvitationController extends Controller
             'password' => bcrypt(Str::random(16))
         ]);
 
-        // Mark invitation as accepted
-        $invitation->accept();
+        // Accept invitation and add to organization
+        try {
+            $invitation->accept($user);
+        } catch (\Exception $e) {
+            return redirect()->route('login')
+                ->with('error', $e->getMessage());
+        }
 
         // Log the user in
         auth()->login($user);
@@ -103,7 +157,12 @@ class InvitationController extends Controller
 
     public function destroy(Invitation $invitation)
     {
-        if ($invitation->inviter_id !== auth()->id()) {
+        $organization = auth()->user()->currentOrganization;
+        if (!$organization || $invitation->organization_id !== $organization->id) {
+            abort(404);
+        }
+
+        if (!$organization->isAdmin(auth()->user()) && !$organization->isOwner(auth()->user())) {
             abort(403);
         }
 

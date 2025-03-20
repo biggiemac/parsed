@@ -21,6 +21,7 @@ class User extends Authenticatable
         'name',
         'email',
         'password',
+        'current_organization_id',
     ];
 
     /**
@@ -38,16 +39,40 @@ class User extends Authenticatable
      *
      * @return array<string, string>
      */
-    protected function casts(): array
-    {
-        return [
-            'email_verified_at' => 'datetime',
-            'password' => 'hashed',
-        ];
-    }
+    protected $casts = [
+        'email_verified_at' => 'datetime',
+        'password' => 'hashed',
+    ];
 
     public function cards()
     {
         return $this->hasMany(Card::class);
+    }
+
+    public function ownedOrganizations()
+    {
+        return $this->hasMany(Organization::class, 'owner_id');
+    }
+
+    public function organizations()
+    {
+        return $this->belongsToMany(Organization::class)
+            ->withPivot('role')
+            ->withTimestamps();
+    }
+
+    public function currentOrganization()
+    {
+        return $this->belongsTo(Organization::class, 'current_organization_id');
+    }
+
+    public function setCurrentOrganization(?Organization $organization)
+    {
+        if ($organization && !$this->organizations()->where('organization_id', $organization->id)->exists()) {
+            throw new \Exception('User is not a member of this organization');
+        }
+
+        $this->current_organization_id = $organization?->id;
+        $this->save();
     }
 }

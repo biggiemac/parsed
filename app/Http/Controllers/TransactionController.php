@@ -267,6 +267,50 @@ class TransactionController extends Controller
             ->header('Content-Disposition', 'attachment; filename="transactions.csv"');
     }
 
+    /**
+     * Export all transactions with full details for migration
+     */
+    public function exportAll()
+    {
+        $transactions = Transaction::with(['category', 'card'])
+            ->orderBy('date', 'desc')
+            ->get();
+
+        $csv = \League\Csv\Writer::createFromString('');
+        $csv->insertOne([
+            'Date',
+            'Description',
+            'Card Member',
+            'Amount',
+            'Category',
+            'Card Name',
+            'Card Type',
+            'Card Issuer',
+            'Card Last Four',
+            'Is Ignored'
+        ]);
+
+        foreach ($transactions as $transaction) {
+            $csv->insertOne([
+                $transaction->date->format('Y-m-d'), // Using Y-m-d for better import compatibility
+                $transaction->description,
+                $transaction->card_member,
+                $transaction->amount,
+                $transaction->category?->name ?? '',
+                $transaction->card?->name ?? '',
+                $transaction->card?->type ?? '',
+                $transaction->card?->issuer ?? '',
+                $transaction->card?->last_four ?? '',
+                $transaction->ignored ? '1' : '0'
+            ]);
+        }
+
+        $timestamp = now()->format('Y-m-d_His');
+        return response($csv->toString())
+            ->header('Content-Type', 'text/csv')
+            ->header('Content-Disposition', 'attachment; filename="transactions_export_' . $timestamp . '.csv"');
+    }
+
     public function getDashboardStats()
     {
         $currentMonth = Carbon::now()->startOfMonth();
@@ -382,13 +426,20 @@ class TransactionController extends Controller
             'data' => $request->all()
         ]);
 
-        $request->validate([
+        $rules = [
             'action' => 'required|in:category,card,ignore,unignore',
             'selected_transactions' => 'required|array',
             'selected_transactions.*' => 'exists:transactions,id',
-            'category_id' => 'required_if:action,category|exists:categories,id',
-            'card_id' => 'required_if:action,card|exists:cards,id',
-        ]);
+        ];
+
+        // Add conditional validation rules
+        if ($request->action === 'category') {
+            $rules['category_id'] = 'required|exists:categories,id';
+        } elseif ($request->action === 'card') {
+            $rules['card_id'] = 'required|exists:cards,id';
+        }
+
+        $request->validate($rules);
 
         $transactions = Transaction::whereIn('id', $request->selected_transactions);
 
@@ -413,5 +464,124 @@ class TransactionController extends Controller
 
         return redirect()->route('transactions.index')
             ->with('success', $message);
+    }
+
+    public function import(Request $request)
+    {
+        $request->validate([
+            'transactions_file' => 'required|file|mimes:csv,json|max:10240', // max 10MB
+        ]);
+
+        $file = $request->file('transactions_file');
+        $extension = $file->getClientOriginalExtension();
+        $transactions = [];
+
+        if ($extension === 'json') {
+            $transactions = json_decode(file_get_contents($file->path()), true);
+        } else {
+            // CSV handling
+            $handle = fopen($file->path(), 'r');
+            $headers = fgetcsv($handle);
+            
+            while (($row = fgetcsv($handle)) !== false) {
+                $transactions[] = array_combine($headers, $row);
+            }
+            
+            fclose($handle);
+        }
+
+        // Convert array to collection
+        $transactions = collect($transactions);
+
+        $imported = 0;
+        $skipped = 0;
+        $errors = collect(); // Initialize errors as a collection
+
+        foreach ($transactions as $data) {
+            try {
+                // Map the field names from the file to our expected format
+                $mappedData = [
+                    'date' => isset($data['Date']) ? Carbon::parse($data['Date']) : null,
+                    'description' => $data['Description'] ?? null,
+                    'amount' => isset($data['Amount']) ? str_replace(['$', ','], '', $data['Amount']) : null,
+                    'card_member' => $data['Card Member'] ?? null,
+                    'category' => $data['Category'] ?? null,
+                    'card_name' => $data['Card Name'] ?? null,
+                    'last_four' => $data['Card Last Four'] ?? null,
+                    'is_ignored' => isset($data['Is Ignored']) ? (bool)$data['Is Ignored'] : false,
+                ];
+                
+                // Check for required fields
+                if (!isset($mappedData['description']) || !isset($mappedData['amount'])) {
+                    $errors->push("Missing required fields for transaction: " . json_encode($data));
+                    continue;
+                }
+                
+                // Check if transaction already exists
+                $exists = Transaction::where('date', $mappedData['date'])
+                    ->where('description', $mappedData['description'])
+                    ->where('amount', $mappedData['amount'])
+                    ->exists();
+
+                if ($exists) {
+                    $skipped++;
+                    continue;
+                }
+
+                // Find category if provided
+                $category_id = null;
+                if (isset($mappedData['category'])) {
+                    $category = Category::firstOrCreate(
+                        ['name' => $mappedData['category']],
+                        ['organization_id' => auth()->user()->currentOrganization->id]
+                    );
+                    $category_id = $category->id;
+                }
+
+                // Find or create card if provided
+                $card_id = null;
+                if (isset($mappedData['card_name']) && isset($mappedData['last_four'])) {
+                    $card = Card::firstOrCreate(
+                        [
+                            'last_four' => $mappedData['last_four'],
+                            'organization_id' => auth()->user()->currentOrganization->id,
+                            'user_id' => auth()->id()
+                        ],
+                        [
+                            'name' => $mappedData['card_name'],
+                            'type' => $data['Card Type'] ?? null,
+                            'issuer' => $data['Card Issuer'] ?? null
+                        ]
+                    );
+                    $card_id = $card->id;
+                }
+
+                // Create the transaction
+                Transaction::create([
+                    'date' => $mappedData['date'],
+                    'description' => $mappedData['description'],
+                    'amount' => $mappedData['amount'],
+                    'category_id' => $category_id,
+                    'card_id' => $card_id,
+                    'card_member' => $mappedData['card_member'],
+                    'organization_id' => auth()->user()->currentOrganization->id,
+                    'is_ignored' => $mappedData['is_ignored'],
+                    'original_csv_row' => json_encode($data) // Store the original data
+                ]);
+
+                $imported++;
+            } catch (\Exception $e) {
+                $errors->push("Error importing transaction: " . json_encode($data) . " - " . $e->getMessage());
+            }
+        }
+
+        $message = "Successfully imported {$imported} transactions.";
+        if ($skipped > 0) {
+            $message .= " Skipped {$skipped} duplicate transactions.";
+        }
+        
+        return redirect()->route('transactions.index')
+            ->with('success', $message)
+            ->with('errors', $errors);
     }
 }

@@ -30,7 +30,7 @@ class InvitationEmail extends Mailable
     public function envelope(): Envelope
     {
         return new Envelope(
-            subject: 'Invitation to Join ' . config('app.name'),
+            subject: "Invitation to Join {$this->invitation->organization->name} on " . config('app.name'),
         );
     }
 
@@ -41,6 +41,13 @@ class InvitationEmail extends Mailable
     {
         return new Content(
             markdown: 'emails.invitation',
+            with: [
+                'inviterName' => $this->invitation->inviter->name,
+                'organizationName' => $this->invitation->organization->name,
+                'role' => ucfirst($this->invitation->role),
+                'acceptUrl' => route('invitations.accept', $this->invitation->token),
+                'expiresAt' => $this->invitation->expires_at->format('F j, Y'),
+            ],
         );
     }
 

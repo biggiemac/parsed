@@ -1,13 +1,25 @@
 @component('mail::message')
 # You've Been Invited!
 
-You have been invited to join {{ config('app.name') }} to help manage and categorize credit card transactions.
+{{ $inviterName }} has invited you to join **{{ $organizationName }}** as a {{ $role }} on {{ config('app.name') }} to help manage and categorize credit card transactions.
 
-@component('mail::button', ['url' => route('invitations.accept', $invitation->token)])
+As a {{ $role }}, you will be able to:
+@if($role === 'Admin')
+- View and manage all transactions
+- Create and manage categories
+- Invite new members
+- Manage organization settings
+@else
+- View and manage transactions
+- Use existing categories
+- View reports and analytics
+@endif
+
+@component('mail::button', ['url' => $acceptUrl])
 Accept Invitation
 @endcomponent
 
-This invitation link will expire in 7 days.
+This invitation link will expire on {{ $expiresAt }}.
 
 Thanks,<br>
 {{ config('app.name') }}
