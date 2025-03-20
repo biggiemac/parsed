@@ -35,6 +35,13 @@
                     <div class="mb-8">
                         <h3 class="text-lg font-semibold mb-4">Generate Invitation Link</h3>
                         <div class="space-y-4">
+                            <div>
+                                <label for="role" class="block text-sm font-medium text-gray-700 mb-2">Role</label>
+                                <select id="role" class="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm">
+                                    <option value="member">Member</option>
+                                    <option value="admin">Admin</option>
+                                </select>
+                            </div>
                             <button id="generateLink" class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded">
                                 Generate New Link
                             </button>
@@ -113,6 +120,7 @@
             const linkContainer = document.getElementById('linkContainer');
             const linkInput = document.getElementById('inviteLink');
             const copyBtn = document.getElementById('copyLink');
+            const roleSelect = document.getElementById('role');
             const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
 
             if (!csrfToken) {
@@ -133,11 +141,15 @@
                             'Accept': 'application/json',
                             'Content-Type': 'application/json'
                         },
+                        body: JSON.stringify({
+                            role: roleSelect.value
+                        }),
                         credentials: 'same-origin'
                     });
 
                     if (!response.ok) {
-                        throw new Error(`HTTP error! status: ${response.status}`);
+                        const errorData = await response.json();
+                        throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
                     }
 
                     const data = await response.json();
@@ -150,7 +162,7 @@
                     linkInput.select();
                 } catch (error) {
                     console.error('Error:', error);
-                    alert('Failed to generate invitation link. Please try again.');
+                    alert(error.message || 'Failed to generate invitation link. Please try again.');
                 } finally {
                     // Reset button state
                     generateBtn.disabled = false;
