@@ -1,6 +1,9 @@
 <x-guest-layout>
     <form method="POST" action="{{ route('register') }}">
         @csrf
+        @if(isset($invitation))
+            <input type="hidden" name="invitation_token" value="{{ $invitation->token }}">
+        @endif
 
         <!-- Name -->
         <div>

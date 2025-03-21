@@ -68,7 +68,7 @@ class User extends Authenticatable
 
     public function setCurrentOrganization(?Organization $organization)
     {
-        if ($organization && !$this->organizations()->where('organization_id', $organization->id)->exists()) {
+        if ($organization && !$this->organizations()->where('organizations.id', $organization->id)->exists()) {
             throw new \Exception('User is not a member of this organization');
         }
 
